@@ -1,6 +1,6 @@
-# 📅 DuoHabit - Shared Habit & Task Planner
+# 📅 DuoHabit - Shared Habit & Task Planner (Web & Android)
 
-A digital habit tracker and planner designed to match your reference spreadsheet dashboard with real-time progress sharing between you and your friend.
+A digital habit tracker and planner designed to match your reference spreadsheet dashboard with real-time progress sharing between you and your friend across Web and Android (Capacitor).
 
 ---
 
@@ -30,45 +30,88 @@ A digital habit tracker and planner designed to match your reference spreadsheet
     - Monthly leaderboard and streak counters.
     - Side-by-side live daily checklists.
 
-- **Online Live Synchronization & Multi-Device Sharing**:
-  - **Shared Room Codes** (e.g. `DUO-HABIT-1`).
-  - **Instant Share Link**: Copy and send to your friend.
-  - **Live QR Code**: Point phone camera to open and sync instantly.
-  - Works on your local network (`http://192.168.x.x:3001`), locally, or deployable online.
-  - Offline fallback: Saves to browser `localStorage` automatically.
+- **Android App Support via Capacitor**:
+  - Native Android project configured in `android/` with `dist` as the web directory.
+  - Safe-area insets, notch support, and mobile touch-optimized checkboxes.
+  - Non-blocking confirmation dialogs and Android Web Share API support.
+  - Cleartext HTTP enabled for local Wi-Fi development.
 
-- **Customization & Tools**:
-  - Add, edit, or delete habits with emoji icons.
-  - "Share Challenge": Copy a habit into your friend's list with 1 click.
-  - Customize names, avatars, and chart theme colors.
-  - Month and year navigation (jump to any month).
-  - JSON backup export/import.
+- **Configurable Backend & Live Synchronization**:
+  - Configurable backend via `VITE_API_URL` environment variable or in-app runtime settings.
+  - Works with deployed cloud backends (Render, Railway) or local Wi-Fi IP (`http://192.168.x.x:3001`).
+  - Offline fallback: Saves to device `localStorage` automatically when offline.
 
 ---
 
-## 🚀 How to Run
+## ⚙️ Environment Variables
 
-### 1. Start the Production Server
+Copy `.env.example` to `.env`:
+```bash
+# Point to your deployed cloud backend for Android APK and production
+VITE_API_URL=https://your-duohabit-backend.onrender.com
+
+# Or for local Wi-Fi Android testing:
+# VITE_API_URL=http://192.168.0.100:3001
+```
+
+> **Note**: You can also change the backend server URL at runtime directly from inside the app! Click **"Live Sync / Share"** in the top bar to update the **Backend Server URL**.
+
+---
+
+## 🚀 Web Quickstart
+
+### 1. Start Web Server
 ```bash
 npm start
 ```
 Open **[http://localhost:3001](http://localhost:3001)** in your browser.
 
-### 2. Development Mode (with Hot Reload)
+### 2. Development Mode
 ```bash
 npm run dev
 ```
-Runs both the backend server and Vite frontend concurrently on **[http://localhost:5173](http://localhost:5173)**.
+Runs both the backend server and Vite client concurrently at **[http://localhost:5173](http://localhost:5173)**.
 
 ---
 
-## 📱 How to Connect with Your Friend
+## 🤖 Android Build Steps (Capacitor)
 
-1. Open the app and click the **"Live Sync / Share"** button in the top right header.
-2. Choose your identity on this device:
-   - Your device: Select **"🌸 Sathwika (Primary)"**
-   - Friend's device: Select **"⚡ Alex (Friend)"**
-3. Share the room:
-   - **On the same Wi-Fi**: Your friend can scan the QR code with their phone camera or open the local IP link displayed in the modal (e.g. `http://192.168.0.100:3001`).
-   - **Online Deployment**: Deploy to [Render.com](https://render.com) or [Railway.app](https://railway.app) for free (just push to GitHub and choose Node.js web service). Both of you can then use it from anywhere!
-4. Whenever either of you checks off a habit, both screens update instantly!
+The Android native project is located in `android/`.
+
+### Step 1: Build & Sync Web Assets to Android
+Whenever you make changes to the React code, run:
+```bash
+npm run cap:build
+```
+This builds the Vite application into `dist/` and syncs the files to `android/app/src/main/assets/public`.
+
+### Step 2: Open in Android Studio
+```bash
+npm run cap:open
+```
+or open the `android` folder in **Android Studio**.
+
+### Step 3: Build the APK
+- In **Android Studio**: Click **Build** → **Build Bundle(s) / APK(s)** → **Build APK(s)**.
+- The compiled debug APK will be generated at:
+  `android/app/build/outputs/apk/debug/app-debug.apk`
+- Or using the command line (requires JDK 17+ and Android SDK configured):
+  ```powershell
+  cd android
+  .\gradlew.bat assembleDebug
+  ```
+
+---
+
+## 🌐 Deploying the Backend (for Real-Time Sync)
+
+To keep both devices in sync over the internet:
+
+1. Push your code to GitHub.
+2. Go to **[Render.com](https://render.com)** (Free):
+   - Click **New +** → **Web Service**
+   - Connect your repository
+   - Set **Build Command**: `npm install && npm run build`
+   - Set **Start Command**: `npm start`
+3. Once deployed, copy your Render URL (e.g. `https://your-app.onrender.com`).
+4. Set `VITE_API_URL=https://your-app.onrender.com` in `.env` before running `npm run cap:build` (or enter it in the app's Share modal).

@@ -1,0 +1,9 @@
+{
+  "appId": "com.duohabit.app",
+  "appName": "DuoHabit",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  }
+}

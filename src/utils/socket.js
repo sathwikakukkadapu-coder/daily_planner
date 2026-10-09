@@ -1,4 +1,5 @@
 import { io } from 'socket.io-client';
+import { getBackendUrl, isNativeApp } from './apiConfig';
 
 let socket = null;
 let currentRoomId = null;
@@ -8,17 +9,25 @@ export function connectSocket(roomId, userName, callbacks = {}) {
 
   if (socket) {
     socket.disconnect();
+    socket = null;
   }
 
-  // In dev with Vite proxy, connecting to origin or window.location.origin works
-  // If Vite is on port 5173, socket.io connects to same origin which gets proxied to 3001
-  const serverUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-    ? undefined // use relative path so vite proxy handles it
-    : window.location.origin;
+  const backendUrl = getBackendUrl();
 
-  socket = io(serverUrl, {
+  // If in native app and no backend URL configured yet, run in offline local mode
+  if (isNativeApp() && !backendUrl) {
+    console.info('DuoHabit running in offline local mode. Configure backend URL to sync live.');
+    if (onConnectStatus) onConnectStatus(false);
+    return null;
+  }
+
+  // If backendUrl is set (e.g. VITE_API_URL or custom IP), connect to that URL.
+  // Otherwise in desktop browser development, undefined connects to window.location (Vite proxy).
+  const targetUrl = backendUrl || undefined;
+
+  socket = io(targetUrl, {
     transports: ['websocket', 'polling'],
-    timeout: 5000,
+    timeout: 6000,
   });
 
   currentRoomId = roomId;
@@ -33,7 +42,7 @@ export function connectSocket(roomId, userName, callbacks = {}) {
   });
 
   socket.on('connect_error', (err) => {
-    console.warn('Socket connection error (working in local offline mode):', err.message);
+    console.warn('Socket connection error (working in offline local mode):', err.message);
     if (onConnectStatus) onConnectStatus(false);
   });
 

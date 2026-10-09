@@ -41,6 +41,14 @@ export default function App() {
   const [isHabitModalOpen, setIsHabitModalOpen] = useState(false);
   const [habitToEdit, setHabitToEdit] = useState(null);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [confirmState, setConfirmState] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    confirmText: 'Confirm',
+    isDanger: false,
+    onConfirm: null,
+  });
 
   // Real-time Socket state
   const [isLiveConnected, setIsLiveConnected] = useState(false);
@@ -220,31 +228,38 @@ export default function App() {
 
   // Delete Habit
   const handleDeleteHabit = (habitId) => {
-    if (!window.confirm('Are you sure you want to delete this habit?')) return;
+    setConfirmState({
+      isOpen: true,
+      title: 'Delete Habit',
+      message: 'Are you sure you want to delete this habit? All recorded completions for this habit will be removed.',
+      confirmText: 'Delete',
+      isDanger: true,
+      onConfirm: () => {
+        updateAndBroadcast((prev) => {
+          const targetUser = prev.users[activeUserId];
+          const updatedHabits = targetUser.habits.filter((h) => h.id !== habitId);
 
-    updateAndBroadcast((prev) => {
-      const targetUser = prev.users[activeUserId];
-      const updatedHabits = targetUser.habits.filter((h) => h.id !== habitId);
+          // Clean up completion references
+          const cleanedComps = {};
+          Object.entries(targetUser.completions || {}).forEach(([dKey, hMap]) => {
+            const newMap = { ...hMap };
+            delete newMap[habitId];
+            cleanedComps[dKey] = newMap;
+          });
 
-      // Clean up completion references
-      const cleanedComps = {};
-      Object.entries(targetUser.completions || {}).forEach(([dKey, hMap]) => {
-        const newMap = { ...hMap };
-        delete newMap[habitId];
-        cleanedComps[dKey] = newMap;
-      });
-
-      return {
-        ...prev,
-        users: {
-          ...prev.users,
-          [activeUserId]: {
-            ...targetUser,
-            habits: updatedHabits,
-            completions: cleanedComps,
-          },
-        },
-      };
+          return {
+            ...prev,
+            users: {
+              ...prev.users,
+              [activeUserId]: {
+                ...targetUser,
+                habits: updatedHabits,
+                completions: cleanedComps,
+              },
+            },
+          };
+        });
+      },
     });
   };
 
@@ -253,25 +268,32 @@ export default function App() {
     const otherUserKey = activeUserId === 'user1' ? 'user2' : 'user1';
     const otherName = appData.users[otherUserKey].name;
 
-    if (window.confirm(`Copy "${habit.title}" to ${otherName}'s tracker as a shared challenge?`)) {
-      updateAndBroadcast((prev) => {
-        const targetOther = prev.users[otherUserKey];
-        const newHabit = {
-          ...habit,
-          id: 'h_copy_' + Date.now(),
-        };
-        return {
-          ...prev,
-          users: {
-            ...prev.users,
-            [otherUserKey]: {
-              ...targetOther,
-              habits: [...targetOther.habits, newHabit],
+    setConfirmState({
+      isOpen: true,
+      title: 'Share Challenge',
+      message: `Copy "${habit.title}" to ${otherName}'s tracker as a shared challenge?`,
+      confirmText: 'Share',
+      isDanger: false,
+      onConfirm: () => {
+        updateAndBroadcast((prev) => {
+          const targetOther = prev.users[otherUserKey];
+          const newHabit = {
+            ...habit,
+            id: 'h_copy_' + Date.now(),
+          };
+          return {
+            ...prev,
+            users: {
+              ...prev.users,
+              [otherUserKey]: {
+                ...targetOther,
+                habits: [...targetOther.habits, newHabit],
+              },
             },
-          },
-        };
-      });
-    }
+          };
+        });
+      },
+    });
   };
 
   // Save Profiles
@@ -323,16 +345,44 @@ export default function App() {
     });
   };
 
-  // Export / Backup data as JSON file
-  const handleExportData = () => {
+  // Export / Backup data as JSON file (WebView & mobile compatible)
+  const handleExportData = async () => {
     const jsonStr = JSON.stringify(appData, null, 2);
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Habit-Tracker-Backup-${currentYear}-${currentMonth + 1}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const fileName = `Habit-Tracker-Backup-${currentYear}-${currentMonth + 1}.json`;
+
+    // Try Web Share API with file (supported in modern mobile browsers & WebViews)
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        const file = new File([jsonStr], fileName, { type: 'application/json' });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            files: [file],
+            title: 'DuoHabit Backup',
+          });
+          return;
+        }
+      } catch (e) {
+        // Fallback to standard download
+      }
+    }
+
+    try {
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      // In WebViews where blob URL downloads are blocked, copy to clipboard
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(jsonStr);
+        alert('Backup data copied to clipboard as text!');
+      }
+    }
   };
 
   // Today key
@@ -468,6 +518,39 @@ export default function App() {
         user2={user2}
         onSaveProfiles={handleSaveProfiles}
       />
+
+      {/* Confirmation Dialog (replaces blocking window.confirm for WebView compatibility) */}
+      {confirmState.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-xs w-full p-5 space-y-3">
+            <h4 className="font-bold text-slate-800 text-sm">{confirmState.title}</h4>
+            <p className="text-xs text-slate-500 leading-relaxed">{confirmState.message}</p>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmState((prev) => ({ ...prev, isOpen: false }))}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirmState.onConfirm) confirmState.onConfirm();
+                  setConfirmState((prev) => ({ ...prev, isOpen: false }));
+                }}
+                className={`px-3.5 py-1.5 rounded-lg text-white text-xs font-semibold shadow-sm transition ${
+                  confirmState.isDanger
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : 'bg-emerald-600 hover:bg-emerald-700'
+                }`}
+              >
+                {confirmState.confirmText || 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

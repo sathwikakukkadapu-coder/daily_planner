@@ -65,9 +65,9 @@ export default function HabitTable({
           <thead>
             {/* Row 1: Week groupings (Week 1, Week 2, Week 3, Week 4, Week 5) */}
             <tr className="border-b border-slate-200 bg-slate-50/70 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-              <th className="sticky left-0 z-20 bg-slate-100/95 backdrop-blur px-4 py-2.5 text-left border-r border-slate-200 w-64 min-w-[240px]">
+              <th className="sticky left-0 z-20 bg-slate-100/95 backdrop-blur px-2.5 sm:px-4 py-2.5 text-left border-r border-slate-200 w-44 min-w-[150px] sm:w-64 sm:min-w-[240px]">
                 <div className="flex items-center justify-between">
-                  <span className="text-slate-700 font-bold">My Habits</span>
+                  <span className="text-slate-700 font-bold text-xs sm:text-sm">My Habits</span>
                   <button
                     onClick={onAddHabitClick}
                     className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2 py-1 rounded transition border border-emerald-200"
@@ -158,17 +158,17 @@ export default function HabitTable({
               habits.map((habit, index) => (
                 <tr key={habit.id} className="hover:bg-slate-50/60 transition group">
                   {/* Habit title column */}
-                  <td className="sticky left-0 z-10 bg-white group-hover:bg-slate-50/95 backdrop-blur px-4 py-2 text-left border-r border-slate-200">
+                  <td className="sticky left-0 z-10 bg-white group-hover:bg-slate-50/95 backdrop-blur px-2.5 sm:px-4 py-2 text-left border-r border-slate-200 w-44 min-w-[150px] sm:w-64 sm:min-w-[240px]">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                      <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 pr-1 sm:pr-2">
                         <span className="text-base flex-shrink-0">{habit.emoji || '✨'}</span>
                         <span className="font-medium text-slate-800 text-xs truncate" title={habit.title}>
                           {habit.title}
                         </span>
                       </div>
 
-                      {/* Hover action buttons */}
-                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                      {/* Action buttons (visible on mobile touch, hover on desktop) */}
+                      <div className="flex items-center gap-0.5 sm:gap-1 opacity-80 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex-shrink-0">
                         <button
                           onClick={() => onEditHabitClick(habit)}
                           className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded transition"
@@ -204,11 +204,11 @@ export default function HabitTable({
                           onClick={() => handleCellClick(habit.id, day.dateKey, day.dayNumber)}
                           className={`p-1 border-r border-slate-200 text-center cursor-pointer transition ${
                             day.isToday ? 'bg-emerald-50/40' : wIdx % 2 === 1 ? 'bg-slate-50/50' : ''
-                          } hover:bg-emerald-50/80`}
+                          } hover:bg-emerald-50/80 active:bg-emerald-100`}
                         >
-                          <div className="flex items-center justify-center">
+                          <div className="flex items-center justify-center p-0.5">
                             <div
-                              className={`w-5 h-5 rounded flex items-center justify-center transition-all ${
+                              className={`w-6 h-6 sm:w-5 sm:h-5 rounded flex items-center justify-center transition-all ${
                                 isChecked
                                   ? 'bg-slate-800 text-white shadow-sm scale-100'
                                   : 'border border-slate-300 bg-white hover:border-slate-500 scale-95'
