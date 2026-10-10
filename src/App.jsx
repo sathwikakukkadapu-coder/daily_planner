@@ -8,7 +8,9 @@ import ShareModal from './components/ShareModal';
 import HabitModal from './components/HabitModal';
 import ProfileModal from './components/ProfileModal';
 import AuthModal from './components/AuthModal';
+import ProgressReport from './components/ProgressReport';
 
+import { BarChart3 } from 'lucide-react';
 import { getMonthDays, groupDaysByWeeks } from './utils/dateUtils';
 import {
   loadLocalState,
@@ -42,6 +44,7 @@ export default function App() {
   // Active view: user1, user2, or compare
   const [activeUserId, setActiveUserId] = useState(authSession?.userId || initialIdentity);
   const [isCompareMode, setIsCompareMode] = useState(false);
+  const [viewMode, setViewMode] = useState('grid'); // 'grid' (Daily Habit Grid) or 'report' (Weekly & Monthly Progress Report)
 
   // Modals state
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
@@ -404,6 +407,23 @@ export default function App() {
     }));
   };
 
+  // Update Visual Affirmation quote (persists to MongoDB)
+  const handleUpdateAffirmation = (newAffirmation) => {
+    updateAndBroadcast((prev) => {
+      const targetUser = prev.users[activeUserId];
+      return {
+        ...prev,
+        users: {
+          ...prev.users,
+          [activeUserId]: {
+            ...targetUser,
+            affirmation: newAffirmation,
+          },
+        },
+      };
+    });
+  };
+
   // Month navigation
   const handlePrevMonth = () => {
     updateAndBroadcast((prev) => {
@@ -507,7 +527,7 @@ export default function App() {
         onLogout={handleLogout}
       />
 
-      {/* User Switcher Tabs (Me vs Friend vs Compare Both) */}
+      {/* User Switcher Tabs (Me vs Friend vs Compare Both) + View Mode Switcher */}
       <UserSwitcher
         user1={user1}
         user2={user2}
@@ -522,6 +542,8 @@ export default function App() {
         onOpenProfileSettings={() => setIsProfileModalOpen(true)}
         user1Stats={user1Stats}
         user2Stats={user2Stats}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
       />
 
       {/* Main Content Area */}
@@ -538,6 +560,18 @@ export default function App() {
             setActiveUserId(uId);
             setIsCompareMode(false);
           }}
+        />
+      ) : viewMode === 'report' ? (
+        <ProgressReport
+          year={currentYear}
+          monthIndex={currentMonth}
+          days={days}
+          weeks={weeks}
+          userData={activeUserData}
+          otherUserData={otherUserData}
+          todayDateKey={todayDateKey}
+          onUpdateAffirmation={handleUpdateAffirmation}
+          onBackToGrid={() => setViewMode('grid')}
         />
       ) : (
         <main className="space-y-4">
@@ -570,6 +604,17 @@ export default function App() {
             activeUserId={activeUserId}
             isCompareMode={false}
           />
+
+          {/* Jump to Weekly & Monthly Progress Report Button */}
+          <div className="pt-2 flex justify-center">
+            <button
+              onClick={() => setViewMode('report')}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/50 text-slate-700 hover:text-emerald-800 text-xs font-semibold shadow-2xs transition group cursor-pointer"
+            >
+              <BarChart3 className="w-4 h-4 text-emerald-600 group-hover:scale-110 transition-transform" />
+              <span>View {activeUserData.name}'s Weekly & Monthly Progress Report →</span>
+            </button>
+          </div>
         </main>
       )}
 
