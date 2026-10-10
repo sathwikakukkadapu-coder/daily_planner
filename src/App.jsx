@@ -21,6 +21,7 @@ import {
 } from './utils/storage';
 import { getAuthSession, saveAuthSession, clearAuthSession } from './utils/auth';
 import { connectSocket, broadcastState, disconnectSocket } from './utils/socket';
+import { getBackendUrl } from './utils/apiConfig';
 
 export default function App() {
   // Load initial app data with persistent timestamp
@@ -69,7 +70,38 @@ export default function App() {
     saveLocalState(appData);
   }, [appData]);
 
-  // Connect socket and handle room synchronization with timestamped conflict resolution
+  // Initial Fetch: ALWAYS pull latest master room state from MongoDB on startup
+  useEffect(() => {
+    let isCancelled = false;
+
+    const fetchMasterState = async () => {
+      try {
+        const backend = getBackendUrl();
+        const url = backend ? `${backend}/api/room/${roomId}` : `/api/room/${roomId}`;
+        const res = await fetch(url);
+        if (res.ok) {
+          const remoteData = await res.json();
+          if (!isCancelled && remoteData && remoteData.users) {
+            setAppData((local) => {
+              const { resolvedState } = resolveStateConflict(local, remoteData);
+              saveLocalState(resolvedState);
+              return resolvedState;
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Initial server state fetch failed, running with local data:', err);
+      }
+    };
+
+    fetchMasterState();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [roomId]);
+
+  // Connect socket and handle live room synchronization
   useEffect(() => {
     setSavedRoomId(roomId);
 
@@ -83,20 +115,13 @@ export default function App() {
           if (incoming && incoming.users) {
             setAppData((current) => {
               const { resolvedState, shouldBroadcast } = resolveStateConflict(current, incoming);
+              saveLocalState(resolvedState);
               if (shouldBroadcast) {
-                // If local data was newer than restarted server, re-seed the server!
-                broadcastState(current);
+                broadcastState(resolvedState);
               }
               return resolvedState;
             });
           }
-        },
-        onRequestClientState: () => {
-          // Server restarted and requested our latest state
-          setAppData((current) => {
-            broadcastState(current);
-            return current;
-          });
         },
         onPresence: (count) => {
           setOnlineUserCount(count || 1);
@@ -104,8 +129,7 @@ export default function App() {
         onConnectStatus: (connected) => {
           setIsLiveConnected(connected);
         },
-      },
-      appData.updatedAt || 0
+      }
     );
 
     return () => {
@@ -160,16 +184,27 @@ export default function App() {
   const activeUserStats = activeUserId === 'user1' ? user1Stats : user2Stats;
   const otherUserData = activeUserId === 'user1' ? user2 : user1;
 
-  // Broadcast any state change helper with automatic timestamping
+  // Broadcast and persist state with dual REST + WebSocket guarantee
   const updateAndBroadcast = (updater) => {
     setAppData((prev) => {
       const next = updater(prev);
       const withTimestamp = {
         ...next,
+        isDefaultTemplate: false, // Explicit user change
         updatedAt: Date.now(),
       };
       saveLocalState(withTimestamp);
       broadcastState(withTimestamp);
+
+      // Persist directly to MongoDB via REST POST
+      const backend = getBackendUrl();
+      const url = backend ? `${backend}/api/room/${roomId}` : `/api/room/${roomId}`;
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(withTimestamp),
+      }).catch((err) => console.warn('Direct REST save to MongoDB failed:', err));
+
       return withTimestamp;
     });
   };

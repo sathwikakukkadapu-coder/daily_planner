@@ -24,7 +24,7 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Cloud Database (MongoDB Atlas) setup if MONGODB_URI is provided
+// Cloud Database (MongoDB Atlas) setup
 let isMongoConnected = false;
 let RoomModel = null;
 
@@ -46,10 +46,10 @@ if (MONGODB_URI && MONGODB_URI.startsWith('mongodb')) {
       RoomModel = mongoose.model('Room', roomSchema);
     })
     .catch((err) => {
-      console.warn('⚠️ Could not connect to MongoDB, falling back to local storage:', err.message);
+      console.warn('⚠️ Could not connect to MongoDB:', err.message);
     });
 } else {
-  console.log('ℹ️ Running with local/in-memory storage. (Set MONGODB_URI on Render for persistent cloud database).');
+  console.log('ℹ️ Running with local/in-memory storage.');
 }
 
 // Local storage directory fallback
@@ -63,7 +63,6 @@ function getRoomFilePath(roomId) {
   return path.join(DATA_DIR, `${cleanId}.json`);
 }
 
-// In-memory cache
 const memoryStore = new Map();
 
 async function loadRoomData(roomId) {
@@ -130,13 +129,12 @@ async function saveRoomData(roomId, data) {
   }
 }
 
-// Track connected sockets per room
 const roomUsers = new Map();
 
 io.on('connection', (socket) => {
   let currentRoom = null;
 
-  socket.on('join-room', async ({ roomId, userName, clientUpdatedAt }) => {
+  socket.on('join-room', async ({ roomId, userName }) => {
     if (currentRoom) {
       socket.leave(currentRoom);
       const prevSet = roomUsers.get(currentRoom);
@@ -154,19 +152,11 @@ io.on('connection', (socket) => {
     }
     roomUsers.get(roomId).add(socket.id);
 
-    // Load server state
+    // Fetch master room data from MongoDB/cache
     const serverState = await loadRoomData(roomId);
-
     if (serverState) {
-      const serverTime = serverState.updatedAt || 0;
-      const clientTime = clientUpdatedAt || 0;
-
-      // Only send state if server is newer or equal; if client is newer, ask client to sync
-      if (serverTime >= clientTime) {
-        socket.emit('state-sync', serverState);
-      } else {
-        socket.emit('request-client-state');
-      }
+      // Send master room state to connecting client
+      socket.emit('state-sync', serverState);
     }
 
     io.to(roomId).emit('room-presence', {
@@ -176,6 +166,15 @@ io.on('connection', (socket) => {
 
   socket.on('sync-update', async ({ roomId, state }) => {
     if (roomId && state) {
+      // SAFETY GUARD: Do not allow a default unedited template to overwrite existing room data!
+      if (state.isDefaultTemplate) {
+        const existing = await loadRoomData(roomId);
+        if (existing && !existing.isDefaultTemplate) {
+          console.warn(`[Blocked] Default template attempted to overwrite real user room ${roomId}`);
+          return;
+        }
+      }
+
       await saveRoomData(roomId, state);
       // Broadcast to other peers in room
       socket.to(roomId).emit('state-sync', state);
@@ -209,9 +208,18 @@ app.post('/api/room/:roomId', async (req, res) => {
   if (!state) {
     return res.status(400).json({ error: 'State is required' });
   }
+
+  // Safety guard against default template overwrite
+  if (state.isDefaultTemplate) {
+    const existing = await loadRoomData(roomId);
+    if (existing && !existing.isDefaultTemplate) {
+      return res.status(400).json({ error: 'Cannot overwrite active room with default template' });
+    }
+  }
+
   await saveRoomData(roomId, state);
   io.to(roomId).emit('state-sync', state);
-  res.json({ success: true });
+  res.json({ success: true, updatedAt: state.updatedAt });
 });
 
 // Database & Network status endpoint

@@ -24,37 +24,11 @@ export const DEFAULT_USER2_HABITS = [
   { id: 'h210', title: 'Sleep by 11:00 PM', emoji: '🌙', category: 'Sleep' },
 ];
 
-/**
- * Creates initial demo checkmarks matching Image 2 reference:
- * Days 1 to 7 have realistic completions
- */
-export function generateInitialCompletions(habits, year, monthIndex) {
-  const completions = {};
-  const mStr = String(monthIndex + 1).padStart(2, '0');
-  
-  const sampleRates = [1.0, 0.7, 0.7, 0.5, 0.9, 0.5, 0.5];
-
-  sampleRates.forEach((rate, dayIdx) => {
-    const day = dayIdx + 1;
-    const dStr = String(day).padStart(2, '0');
-    const dateKey = `${year}-${mStr}-${dStr}`;
-    completions[dateKey] = {};
-
-    const habitsToCompleteCount = Math.round(habits.length * rate);
-    habits.forEach((habit, hIdx) => {
-      if (hIdx < habitsToCompleteCount) {
-        completions[dateKey][habit.id] = true;
-      }
-    });
-  });
-
-  return completions;
-}
-
-export function getDefaultAppData(year = 2026, monthIndex = 10) {
+export function getDefaultAppData(year = 2026, monthIndex = 9) {
   return {
     version: 2,
-    updatedAt: Date.now(),
+    isDefaultTemplate: true,
+    updatedAt: 0, // 0 indicates initial template, never overwrites real user data
     currentYear: year,
     currentMonth: monthIndex,
     users: {
@@ -63,36 +37,35 @@ export function getDefaultAppData(year = 2026, monthIndex = 10) {
         name: 'Me (Sathwika)',
         avatar: '🌸',
         color: '#10b981', // Emerald green
-        pin: '', // Optional PIN
+        pin: '',
         habits: DEFAULT_USER1_HABITS,
-        completions: generateInitialCompletions(DEFAULT_USER1_HABITS, year, monthIndex),
+        completions: {},
       },
       user2: {
         id: 'user2',
         name: 'Friend (Alex)',
         avatar: '⚡',
         color: '#8b5cf6', // Violet
-        pin: '', // Optional PIN
+        pin: '',
         habits: DEFAULT_USER2_HABITS,
-        completions: generateInitialCompletions(DEFAULT_USER2_HABITS, year, monthIndex),
+        completions: {},
       }
     }
   };
 }
 
-const LOCAL_STORAGE_KEY = 'duo_habit_tracker_state_v2';
-const LEGACY_STORAGE_KEY = 'duo_habit_tracker_state_v1';
+const LOCAL_STORAGE_KEY = 'duo_habit_tracker_state_v3';
+const LEGACY_STORAGE_V2 = 'duo_habit_tracker_state_v2';
+const LEGACY_STORAGE_V1 = 'duo_habit_tracker_state_v1';
 const MY_IDENTITY_KEY = 'duo_habit_my_identity';
 const ROOM_ID_KEY = 'duo_habit_room_id';
 
 export function loadLocalState() {
   try {
-    const saved = localStorage.getItem(LOCAL_STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY);
+    const saved = localStorage.getItem(LOCAL_STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_V2);
     if (saved) {
       const parsed = JSON.parse(saved);
       if (parsed && parsed.users) {
-        // Ensure updatedAt exists
-        if (!parsed.updatedAt) parsed.updatedAt = Date.now();
         return parsed;
       }
     }
@@ -105,11 +78,7 @@ export function loadLocalState() {
 
 export function saveLocalState(state) {
   try {
-    const toSave = {
-      ...state,
-      updatedAt: state.updatedAt || Date.now(),
-    };
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(toSave));
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(state));
   } catch (e) {
     console.error('Error saving state to localStorage:', e);
   }
@@ -117,38 +86,41 @@ export function saveLocalState(state) {
 
 /**
  * Resolves conflict between local state and incoming server state.
- * Prevents a stale/restarted Render server from wiping newer local changes!
+ * Prevents a default/empty template from overwriting real database data.
  * @param {object} localState 
  * @param {object} incomingState 
  * @returns {{ resolvedState: object, shouldBroadcast: boolean }}
  */
 export function resolveStateConflict(localState, incomingState) {
+  // If no incoming state from server, keep local
   if (!incomingState || !incomingState.users) {
-    return { resolvedState: localState, shouldBroadcast: true };
+    return { resolvedState: localState, shouldBroadcast: false };
   }
-  if (!localState || !localState.users) {
+
+  // If local is just a default template, always accept incoming server state
+  if (!localState || !localState.users || localState.isDefaultTemplate) {
     return { resolvedState: incomingState, shouldBroadcast: false };
+  }
+
+  // If server state is an unedited default template and local has user data, keep local and broadcast
+  if (incomingState.isDefaultTemplate && !localState.isDefaultTemplate) {
+    return { resolvedState: localState, shouldBroadcast: true };
   }
 
   const localTime = localState.updatedAt || 0;
   const incomingTime = incomingState.updatedAt || 0;
 
-  // If local state is newer than incoming server state (e.g. server restarted or container reset)
-  if (localTime > incomingTime) {
-    console.warn(`Local data (${localTime}) is newer than server data (${incomingTime}). Preserving local data and re-seeding server.`);
+  // The state with the newer timestamp wins
+  if (incomingTime >= localTime) {
     return {
-      resolvedState: localState,
-      shouldBroadcast: true, // Tells caller to re-seed the server with latest local state
+      resolvedState: incomingState,
+      shouldBroadcast: false,
     };
   }
 
-  // If incoming state is newer, merge completions and habit definitions safely
   return {
-    resolvedState: {
-      ...incomingState,
-      updatedAt: incomingTime || Date.now(),
-    },
-    shouldBroadcast: false,
+    resolvedState: localState,
+    shouldBroadcast: true,
   };
 }
 
