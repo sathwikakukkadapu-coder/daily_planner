@@ -1,6 +1,7 @@
-import React from 'react';
-import { ChevronLeft, ChevronRight, Calendar, Share2, Plus, Wifi, WifiOff, Download, Sparkles } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { ChevronLeft, ChevronRight, Calendar, Share2, Plus, Wifi, WifiOff, Download, Sparkles, LogOut, Lock } from 'lucide-react';
 import { MONTH_NAMES } from '../utils/dateUtils';
+import { getTimeBasedGreeting } from '../utils/greeting';
 
 export default function Header({
   year,
@@ -17,13 +18,50 @@ export default function Header({
   onOpenShareModal,
   onAddHabitClick,
   onExportData,
+  currentAuthUser,
+  onLogout,
 }) {
   const currentMonthName = MONTH_NAMES[monthIndex];
   const { totalHabits, totalCompletedHabits, progressPct } = activeUserStats;
 
+  // Personalized time-based greeting
+  const greeting = useMemo(() => {
+    return getTimeBasedGreeting(currentAuthUser?.name || activeUserData?.name || 'Friend');
+  }, [currentAuthUser?.name, activeUserData?.name]);
+
   return (
     <header className="flex flex-col gap-4 mb-5">
-      {/* Top Banner Bar: Title, Month Navigation, and Sync Status */}
+      {/* Personalized Time-Based Greeting Banner */}
+      <div className="bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-indigo-500/10 border border-emerald-500/20 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+        <div className="flex items-center gap-3">
+          <span className="text-3xl p-2 bg-white rounded-xl shadow-sm border border-emerald-100/60 flex-shrink-0">
+            {greeting.emoji}
+          </span>
+          <div>
+            <h2 className="text-lg sm:text-xl font-bold text-slate-800 tracking-tight">
+              {greeting.fullGreeting}
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">{greeting.subtext}</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <span className="text-xs bg-white text-slate-700 px-3 py-1.5 rounded-xl border border-slate-200 font-semibold flex items-center gap-1.5 shadow-sm">
+            <span>{currentAuthUser?.avatar || activeUserData?.avatar || '👤'}</span>
+            <span>{currentAuthUser?.name || activeUserData?.name || 'User'}</span>
+          </span>
+          <button
+            onClick={onLogout}
+            className="text-xs bg-white hover:bg-slate-50 text-slate-600 px-2.5 py-1.5 rounded-xl border border-slate-200 font-medium transition shadow-sm flex items-center gap-1.5"
+            title="Switch profile or lock session"
+          >
+            <Lock className="w-3.5 h-3.5 text-slate-400" />
+            <span>Switch User</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Title, Month Navigation, and Action Buttons Bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         {/* Left: Month Title & Navigation matching Image 2 */}
         <div className="flex items-center gap-3">

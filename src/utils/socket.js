@@ -4,8 +4,8 @@ import { getBackendUrl, isNativeApp } from './apiConfig';
 let socket = null;
 let currentRoomId = null;
 
-export function connectSocket(roomId, userName, callbacks = {}) {
-  const { onStateSync, onPresence, onConnectStatus } = callbacks;
+export function connectSocket(roomId, userName, callbacks = {}, clientUpdatedAt = 0) {
+  const { onStateSync, onPresence, onConnectStatus, onRequestClientState } = callbacks;
 
   if (socket) {
     socket.disconnect();
@@ -21,8 +21,6 @@ export function connectSocket(roomId, userName, callbacks = {}) {
     return null;
   }
 
-  // If backendUrl is set (e.g. VITE_API_URL or custom IP), connect to that URL.
-  // Otherwise in desktop browser development, undefined connects to window.location (Vite proxy).
   const targetUrl = backendUrl || undefined;
 
   socket = io(targetUrl, {
@@ -34,7 +32,7 @@ export function connectSocket(roomId, userName, callbacks = {}) {
 
   socket.on('connect', () => {
     if (onConnectStatus) onConnectStatus(true);
-    socket.emit('join-room', { roomId, userName });
+    socket.emit('join-room', { roomId, userName, clientUpdatedAt });
   });
 
   socket.on('disconnect', () => {
@@ -49,6 +47,12 @@ export function connectSocket(roomId, userName, callbacks = {}) {
   socket.on('state-sync', (incomingState) => {
     if (onStateSync) {
       onStateSync(incomingState);
+    }
+  });
+
+  socket.on('request-client-state', () => {
+    if (onRequestClientState) {
+      onRequestClientState();
     }
   });
 

@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
+import mongoose from 'mongoose';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,24 +24,75 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Storage directory for rooms
+// Cloud Database (MongoDB Atlas) setup if MONGODB_URI is provided
+let isMongoConnected = false;
+let RoomModel = null;
+
+const MONGODB_URI = process.env.MONGODB_URI || process.env.DATABASE_URL;
+if (MONGODB_URI && MONGODB_URI.startsWith('mongodb')) {
+  mongoose
+    .connect(MONGODB_URI, { dbName: 'duohabit' })
+    .then(() => {
+      console.log('✅ Connected to persistent MongoDB Atlas database!');
+      isMongoConnected = true;
+      const roomSchema = new mongoose.Schema(
+        {
+          roomId: { type: String, required: true, unique: true },
+          state: { type: Object, required: true },
+          updatedAt: { type: Number, default: Date.now }
+        },
+        { timestamps: true }
+      );
+      RoomModel = mongoose.model('Room', roomSchema);
+    })
+    .catch((err) => {
+      console.warn('⚠️ Could not connect to MongoDB, falling back to local storage:', err.message);
+    });
+} else {
+  console.log('ℹ️ Running with local/in-memory storage. (Set MONGODB_URI on Render for persistent cloud database).');
+}
+
+// Local storage directory fallback
 const DATA_DIR = path.join(__dirname, 'data', 'rooms');
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
 function getRoomFilePath(roomId) {
-  // Sanitize room ID
   const cleanId = roomId.replace(/[^a-zA-Z0-9_-]/g, '_');
   return path.join(DATA_DIR, `${cleanId}.json`);
 }
 
-function loadRoomData(roomId) {
+// In-memory cache
+const memoryStore = new Map();
+
+async function loadRoomData(roomId) {
+  // 1. Try MongoDB if connected
+  if (isMongoConnected && RoomModel) {
+    try {
+      const doc = await RoomModel.findOne({ roomId });
+      if (doc && doc.state) {
+        memoryStore.set(roomId, doc.state);
+        return doc.state;
+      }
+    } catch (err) {
+      console.error('Error loading from MongoDB:', err);
+    }
+  }
+
+  // 2. Check memory store
+  if (memoryStore.has(roomId)) {
+    return memoryStore.get(roomId);
+  }
+
+  // 3. Fallback to local file
   const filePath = getRoomFilePath(roomId);
   if (fs.existsSync(filePath)) {
     try {
       const data = fs.readFileSync(filePath, 'utf8');
-      return JSON.parse(data);
+      const parsed = JSON.parse(data);
+      memoryStore.set(roomId, parsed);
+      return parsed;
     } catch (err) {
       console.error(`Error reading room file for ${roomId}:`, err);
     }
@@ -48,10 +100,31 @@ function loadRoomData(roomId) {
   return null;
 }
 
-function saveRoomData(roomId, data) {
+async function saveRoomData(roomId, data) {
+  const stateToSave = {
+    ...data,
+    updatedAt: data.updatedAt || Date.now()
+  };
+
+  memoryStore.set(roomId, stateToSave);
+
+  // 1. Save to MongoDB if connected
+  if (isMongoConnected && RoomModel) {
+    try {
+      await RoomModel.findOneAndUpdate(
+        { roomId },
+        { roomId, state: stateToSave, updatedAt: stateToSave.updatedAt },
+        { upsert: true, new: true }
+      );
+    } catch (err) {
+      console.error('Error saving to MongoDB:', err);
+    }
+  }
+
+  // 2. Save to local file
   const filePath = getRoomFilePath(roomId);
   try {
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+    fs.writeFileSync(filePath, JSON.stringify(stateToSave, null, 2), 'utf8');
   } catch (err) {
     console.error(`Error saving room file for ${roomId}:`, err);
   }
@@ -63,7 +136,7 @@ const roomUsers = new Map();
 io.on('connection', (socket) => {
   let currentRoom = null;
 
-  socket.on('join-room', ({ roomId, userName }) => {
+  socket.on('join-room', async ({ roomId, userName, clientUpdatedAt }) => {
     if (currentRoom) {
       socket.leave(currentRoom);
       const prevSet = roomUsers.get(currentRoom);
@@ -81,10 +154,19 @@ io.on('connection', (socket) => {
     }
     roomUsers.get(roomId).add(socket.id);
 
-    // Send latest state if available
-    const existing = loadRoomData(roomId);
-    if (existing) {
-      socket.emit('state-sync', existing);
+    // Load server state
+    const serverState = await loadRoomData(roomId);
+
+    if (serverState) {
+      const serverTime = serverState.updatedAt || 0;
+      const clientTime = clientUpdatedAt || 0;
+
+      // Only send state if server is newer or equal; if client is newer, ask client to sync
+      if (serverTime >= clientTime) {
+        socket.emit('state-sync', serverState);
+      } else {
+        socket.emit('request-client-state');
+      }
     }
 
     io.to(roomId).emit('room-presence', {
@@ -92,9 +174,9 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('sync-update', ({ roomId, state }) => {
+  socket.on('sync-update', async ({ roomId, state }) => {
     if (roomId && state) {
-      saveRoomData(roomId, state);
+      await saveRoomData(roomId, state);
       // Broadcast to other peers in room
       socket.to(roomId).emit('state-sync', state);
     }
@@ -112,8 +194,8 @@ io.on('connection', (socket) => {
 });
 
 // REST Endpoints
-app.get('/api/room/:roomId', (req, res) => {
-  const data = loadRoomData(req.params.roomId);
+app.get('/api/room/:roomId', async (req, res) => {
+  const data = await loadRoomData(req.params.roomId);
   if (data) {
     res.json(data);
   } else {
@@ -121,15 +203,25 @@ app.get('/api/room/:roomId', (req, res) => {
   }
 });
 
-app.post('/api/room/:roomId', (req, res) => {
+app.post('/api/room/:roomId', async (req, res) => {
   const roomId = req.params.roomId;
   const state = req.body;
   if (!state) {
     return res.status(400).json({ error: 'State is required' });
   }
-  saveRoomData(roomId, state);
+  await saveRoomData(roomId, state);
   io.to(roomId).emit('state-sync', state);
   res.json({ success: true });
+});
+
+// Database & Network status endpoint
+app.get('/api/status', (req, res) => {
+  res.json({
+    status: 'online',
+    isMongoConnected,
+    storageType: isMongoConnected ? 'mongodb-cloud' : 'local-ephemeral',
+    roomsCount: memoryStore.size
+  });
 });
 
 // Network IP detection for mobile device testing
@@ -148,7 +240,8 @@ app.get('/api/network-info', (req, res) => {
   res.json({
     localIp: addresses[0] || 'localhost',
     allIps: addresses,
-    port: process.env.PORT || 3001
+    port: process.env.PORT || 3001,
+    isMongoConnected
   });
 });
 
@@ -163,5 +256,5 @@ if (fs.existsSync(distPath)) {
 
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
-  console.log(`🚀 DuoHabit Server running on http://localhost:${PORT}`);
+  console.log(`🚀 DuoHabit Server running on port ${PORT}`);
 });

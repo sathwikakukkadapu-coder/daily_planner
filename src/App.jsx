@@ -7,6 +7,7 @@ import ComparisonView from './components/ComparisonView';
 import ShareModal from './components/ShareModal';
 import HabitModal from './components/HabitModal';
 import ProfileModal from './components/ProfileModal';
+import AuthModal from './components/AuthModal';
 
 import { getMonthDays, groupDaysByWeeks } from './utils/dateUtils';
 import {
@@ -16,12 +17,13 @@ import {
   setSavedIdentity,
   getSavedRoomId,
   setSavedRoomId,
-  getDefaultAppData,
+  resolveStateConflict,
 } from './utils/storage';
+import { getAuthSession, saveAuthSession, clearAuthSession } from './utils/auth';
 import { connectSocket, broadcastState, disconnectSocket } from './utils/socket';
 
 export default function App() {
-  // Load initial app data
+  // Load initial app data with persistent timestamp
   const [appData, setAppData] = useState(() => loadLocalState());
 
   // URL Query inspection (?room=XYZ, ?as=user2)
@@ -32,8 +34,12 @@ export default function App() {
   const [roomId, setRoomId] = useState(initialRoomId);
   const [myIdentity, setMyIdentity] = useState(initialIdentity);
 
+  // Authentication state
+  const [authSession, setAuthSession] = useState(() => getAuthSession());
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(() => !getAuthSession());
+
   // Active view: user1, user2, or compare
-  const [activeUserId, setActiveUserId] = useState(initialIdentity);
+  const [activeUserId, setActiveUserId] = useState(authSession?.userId || initialIdentity);
   const [isCompareMode, setIsCompareMode] = useState(false);
 
   // Modals state
@@ -63,25 +69,44 @@ export default function App() {
     saveLocalState(appData);
   }, [appData]);
 
-  // Connect socket and handle room synchronization
+  // Connect socket and handle room synchronization with timestamped conflict resolution
   useEffect(() => {
     setSavedRoomId(roomId);
 
     const userName = appData.users[myIdentity]?.name || 'User';
 
-    const socket = connectSocket(roomId, userName, {
-      onStateSync: (incoming) => {
-        if (incoming && incoming.users) {
-          setAppData(incoming);
-        }
+    const socket = connectSocket(
+      roomId,
+      userName,
+      {
+        onStateSync: (incoming) => {
+          if (incoming && incoming.users) {
+            setAppData((current) => {
+              const { resolvedState, shouldBroadcast } = resolveStateConflict(current, incoming);
+              if (shouldBroadcast) {
+                // If local data was newer than restarted server, re-seed the server!
+                broadcastState(current);
+              }
+              return resolvedState;
+            });
+          }
+        },
+        onRequestClientState: () => {
+          // Server restarted and requested our latest state
+          setAppData((current) => {
+            broadcastState(current);
+            return current;
+          });
+        },
+        onPresence: (count) => {
+          setOnlineUserCount(count || 1);
+        },
+        onConnectStatus: (connected) => {
+          setIsLiveConnected(connected);
+        },
       },
-      onPresence: (count) => {
-        setOnlineUserCount(count || 1);
-      },
-      onConnectStatus: (connected) => {
-        setIsLiveConnected(connected);
-      },
-    });
+      appData.updatedAt || 0
+    );
 
     return () => {
       disconnectSocket();
@@ -135,13 +160,51 @@ export default function App() {
   const activeUserStats = activeUserId === 'user1' ? user1Stats : user2Stats;
   const otherUserData = activeUserId === 'user1' ? user2 : user1;
 
-  // Broadcast any state change helper
+  // Broadcast any state change helper with automatic timestamping
   const updateAndBroadcast = (updater) => {
     setAppData((prev) => {
       const next = updater(prev);
-      broadcastState(next);
-      return next;
+      const withTimestamp = {
+        ...next,
+        updatedAt: Date.now(),
+      };
+      saveLocalState(withTimestamp);
+      broadcastState(withTimestamp);
+      return withTimestamp;
     });
+  };
+
+  // Authentication Handlers
+  const handleAuthenticate = (userId) => {
+    const userObj = appData.users[userId];
+    setAuthSession({
+      userId,
+      userName: userObj.name,
+      avatar: userObj.avatar,
+    });
+    setMyIdentity(userId);
+    setSavedIdentity(userId);
+    setActiveUserId(userId);
+    setIsAuthModalOpen(false);
+  };
+
+  const handleLogout = () => {
+    clearAuthSession();
+    setAuthSession(null);
+    setIsAuthModalOpen(true);
+  };
+
+  const handleSetUserPin = (userId, newPin) => {
+    updateAndBroadcast((prev) => ({
+      ...prev,
+      users: {
+        ...prev.users,
+        [userId]: {
+          ...prev.users[userId],
+          pin: newPin,
+        },
+      },
+    }));
   };
 
   // Habit checkbox toggle
@@ -239,7 +302,6 @@ export default function App() {
           const targetUser = prev.users[activeUserId];
           const updatedHabits = targetUser.habits.filter((h) => h.id !== habitId);
 
-          // Clean up completion references
           const cleanedComps = {};
           Object.entries(targetUser.completions || {}).forEach(([dKey, hMap]) => {
             const newMap = { ...hMap };
@@ -309,48 +371,43 @@ export default function App() {
 
   // Month navigation
   const handlePrevMonth = () => {
-    setAppData((prev) => {
+    updateAndBroadcast((prev) => {
       let m = prev.currentMonth - 1;
       let y = prev.currentYear;
       if (m < 0) {
         m = 11;
         y -= 1;
       }
-      const next = { ...prev, currentMonth: m, currentYear: y };
-      broadcastState(next);
-      return next;
+      return { ...prev, currentMonth: m, currentYear: y };
     });
   };
 
   const handleNextMonth = () => {
-    setAppData((prev) => {
+    updateAndBroadcast((prev) => {
       let m = prev.currentMonth + 1;
       let y = prev.currentYear;
       if (m > 11) {
         m = 0;
         y += 1;
       }
-      const next = { ...prev, currentMonth: m, currentYear: y };
-      broadcastState(next);
-      return next;
+      return { ...prev, currentMonth: m, currentYear: y };
     });
   };
 
   const handleJumpToday = () => {
     const now = new Date();
-    setAppData((prev) => {
-      const next = { ...prev, currentMonth: now.getMonth(), currentYear: now.getFullYear() };
-      broadcastState(next);
-      return next;
-    });
+    updateAndBroadcast((prev) => ({
+      ...prev,
+      currentMonth: now.getMonth(),
+      currentYear: now.getFullYear(),
+    }));
   };
 
-  // Export / Backup data as JSON file (WebView & mobile compatible)
+  // Export / Backup data as JSON file
   const handleExportData = async () => {
     const jsonStr = JSON.stringify(appData, null, 2);
     const fileName = `Habit-Tracker-Backup-${currentYear}-${currentMonth + 1}.json`;
 
-    // Try Web Share API with file (supported in modern mobile browsers & WebViews)
     if (typeof navigator !== 'undefined' && navigator.share) {
       try {
         const file = new File([jsonStr], fileName, { type: 'application/json' });
@@ -362,7 +419,7 @@ export default function App() {
           return;
         }
       } catch (e) {
-        // Fallback to standard download
+        // Fallback
       }
     }
 
@@ -377,7 +434,6 @@ export default function App() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (e) {
-      // In WebViews where blob URL downloads are blocked, copy to clipboard
       if (navigator.clipboard?.writeText) {
         navigator.clipboard.writeText(jsonStr);
         alert('Backup data copied to clipboard as text!');
@@ -395,7 +451,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-800 p-3 sm:p-6 lg:p-8 max-w-[1400px] mx-auto transition-all">
-      {/* Header with Month, Navigation, and KPI cards */}
+      {/* Header with Greeting, Month Navigation, and KPI cards */}
       <Header
         year={currentYear}
         monthIndex={currentMonth}
@@ -412,6 +468,8 @@ export default function App() {
           setIsHabitModalOpen(true);
         }}
         onExportData={handleExportData}
+        currentAuthUser={authSession}
+        onLogout={handleLogout}
       />
 
       {/* User Switcher Tabs (Me vs Friend vs Compare Both) */}
@@ -480,6 +538,14 @@ export default function App() {
         </main>
       )}
 
+      {/* Initial Authentication Modal (shown at the beginning) */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        users={appData.users}
+        onAuthenticate={handleAuthenticate}
+        onSetUserPin={handleSetUserPin}
+      />
+
       {/* Share / Live Sync Modal */}
       <ShareModal
         isOpen={isShareModalOpen}
@@ -519,7 +585,7 @@ export default function App() {
         onSaveProfiles={handleSaveProfiles}
       />
 
-      {/* Confirmation Dialog (replaces blocking window.confirm for WebView compatibility) */}
+      {/* Confirmation Dialog */}
       {confirmState.isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in">
           <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-xs w-full p-5 space-y-3">

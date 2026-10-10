@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Check } from 'lucide-react';
+import { X, Check, Lock } from 'lucide-react';
 
 export default function ProfileModal({
   isOpen,
@@ -11,18 +11,20 @@ export default function ProfileModal({
   const [u1Name, setU1Name] = useState(user1.name);
   const [u1Avatar, setU1Avatar] = useState(user1.avatar || '🌸');
   const [u1Color, setU1Color] = useState(user1.color || '#10b981');
+  const [u1Pin, setU1Pin] = useState(user1.pin || '');
 
   const [u2Name, setU2Name] = useState(user2.name);
   const [u2Avatar, setU2Avatar] = useState(user2.avatar || '⚡');
   const [u2Color, setU2Color] = useState(user2.color || '#8b5cf6');
+  const [u2Pin, setU2Pin] = useState(user2.pin || '');
 
   if (!isOpen) return null;
 
   const handleSubmit = (e) => {
     e.preventDefault();
     onSaveProfiles({
-      user1: { ...user1, name: u1Name.trim() || 'Me', avatar: u1Avatar, color: u1Color },
-      user2: { ...user2, name: u2Name.trim() || 'Friend', avatar: u2Avatar, color: u2Color },
+      user1: { ...user1, name: u1Name.trim() || 'Me', avatar: u1Avatar, color: u1Color, pin: u1Pin.trim() },
+      user2: { ...user2, name: u2Name.trim() || 'Friend', avatar: u2Avatar, color: u2Color, pin: u2Pin.trim() },
     });
     onClose();
   };
@@ -34,7 +36,7 @@ export default function ProfileModal({
       <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-md w-full overflow-hidden">
         {/* Header */}
         <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
-          <h3 className="font-bold text-slate-800 text-sm">Edit User Profiles</h3>
+          <h3 className="font-bold text-slate-800 text-sm">Edit User Profiles & Passcodes</h3>
           <button
             onClick={onClose}
             className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
@@ -44,7 +46,7 @@ export default function ProfileModal({
         </div>
 
         {/* Body */}
-        <form onSubmit={handleSubmit} className="p-5 space-y-5 text-xs">
+        <form onSubmit={handleSubmit} className="p-5 space-y-5 text-xs max-h-[85vh] overflow-y-auto custom-scrollbar">
           {/* User 1 Profile */}
           <div className="p-3.5 rounded-xl border border-emerald-200 bg-emerald-50/40 space-y-3">
             <span className="font-bold text-emerald-800 block text-xs">Profile 1 (You)</span>
@@ -67,6 +69,18 @@ export default function ProfileModal({
                   title="Choose chart line color"
                 />
               </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Lock className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+              <input
+                type="password"
+                maxLength={6}
+                value={u1Pin}
+                onChange={(e) => setU1Pin(e.target.value)}
+                placeholder="4-digit PIN (optional - leave blank for none)"
+                className="flex-1 px-3 py-1.5 border border-slate-200 rounded-lg text-xs bg-white font-mono"
+              />
             </div>
 
             <div>
@@ -110,6 +124,18 @@ export default function ProfileModal({
                   title="Choose chart line color"
                 />
               </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Lock className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+              <input
+                type="password"
+                maxLength={6}
+                value={u2Pin}
+                onChange={(e) => setU2Pin(e.target.value)}
+                placeholder="4-digit PIN (optional - leave blank for none)"
+                className="flex-1 px-3 py-1.5 border border-slate-200 rounded-lg text-xs bg-white font-mono"
+              />
             </div>
 
             <div>

@@ -32,8 +32,6 @@ export function generateInitialCompletions(habits, year, monthIndex) {
   const completions = {};
   const mStr = String(monthIndex + 1).padStart(2, '0');
   
-  // Sample pattern for days 1 to 7 like in reference image
-  // Day 1: 100%, Day 2: 70%, Day 3: 70%, Day 4: 50%, Day 5: 90%, Day 6: 50%, Day 7: 50%
   const sampleRates = [1.0, 0.7, 0.7, 0.5, 0.9, 0.5, 0.5];
 
   sampleRates.forEach((rate, dayIdx) => {
@@ -53,9 +51,10 @@ export function generateInitialCompletions(habits, year, monthIndex) {
   return completions;
 }
 
-export function getDefaultAppData(year = 2026, monthIndex = 10) { // default to November (10 in 0-indexed) or current month
+export function getDefaultAppData(year = 2026, monthIndex = 10) {
   return {
-    version: 1,
+    version: 2,
+    updatedAt: Date.now(),
     currentYear: year,
     currentMonth: monthIndex,
     users: {
@@ -63,7 +62,8 @@ export function getDefaultAppData(year = 2026, monthIndex = 10) { // default to 
         id: 'user1',
         name: 'Me (Sathwika)',
         avatar: '🌸',
-        color: '#10b981', // Emerald green from Image 2
+        color: '#10b981', // Emerald green
+        pin: '', // Optional PIN
         habits: DEFAULT_USER1_HABITS,
         completions: generateInitialCompletions(DEFAULT_USER1_HABITS, year, monthIndex),
       },
@@ -72,6 +72,7 @@ export function getDefaultAppData(year = 2026, monthIndex = 10) { // default to 
         name: 'Friend (Alex)',
         avatar: '⚡',
         color: '#8b5cf6', // Violet
+        pin: '', // Optional PIN
         habits: DEFAULT_USER2_HABITS,
         completions: generateInitialCompletions(DEFAULT_USER2_HABITS, year, monthIndex),
       }
@@ -79,15 +80,21 @@ export function getDefaultAppData(year = 2026, monthIndex = 10) { // default to 
   };
 }
 
-const LOCAL_STORAGE_KEY = 'duo_habit_tracker_state_v1';
+const LOCAL_STORAGE_KEY = 'duo_habit_tracker_state_v2';
+const LEGACY_STORAGE_KEY = 'duo_habit_tracker_state_v1';
 const MY_IDENTITY_KEY = 'duo_habit_my_identity';
 const ROOM_ID_KEY = 'duo_habit_room_id';
 
 export function loadLocalState() {
   try {
-    const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+    const saved = localStorage.getItem(LOCAL_STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY);
     if (saved) {
-      return JSON.parse(saved);
+      const parsed = JSON.parse(saved);
+      if (parsed && parsed.users) {
+        // Ensure updatedAt exists
+        if (!parsed.updatedAt) parsed.updatedAt = Date.now();
+        return parsed;
+      }
     }
   } catch (e) {
     console.error('Error loading state from localStorage:', e);
@@ -98,10 +105,51 @@ export function loadLocalState() {
 
 export function saveLocalState(state) {
   try {
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(state));
+    const toSave = {
+      ...state,
+      updatedAt: state.updatedAt || Date.now(),
+    };
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(toSave));
   } catch (e) {
     console.error('Error saving state to localStorage:', e);
   }
+}
+
+/**
+ * Resolves conflict between local state and incoming server state.
+ * Prevents a stale/restarted Render server from wiping newer local changes!
+ * @param {object} localState 
+ * @param {object} incomingState 
+ * @returns {{ resolvedState: object, shouldBroadcast: boolean }}
+ */
+export function resolveStateConflict(localState, incomingState) {
+  if (!incomingState || !incomingState.users) {
+    return { resolvedState: localState, shouldBroadcast: true };
+  }
+  if (!localState || !localState.users) {
+    return { resolvedState: incomingState, shouldBroadcast: false };
+  }
+
+  const localTime = localState.updatedAt || 0;
+  const incomingTime = incomingState.updatedAt || 0;
+
+  // If local state is newer than incoming server state (e.g. server restarted or container reset)
+  if (localTime > incomingTime) {
+    console.warn(`Local data (${localTime}) is newer than server data (${incomingTime}). Preserving local data and re-seeding server.`);
+    return {
+      resolvedState: localState,
+      shouldBroadcast: true, // Tells caller to re-seed the server with latest local state
+    };
+  }
+
+  // If incoming state is newer, merge completions and habit definitions safely
+  return {
+    resolvedState: {
+      ...incomingState,
+      updatedAt: incomingTime || Date.now(),
+    },
+    shouldBroadcast: false,
+  };
 }
 
 export function getSavedIdentity() {
